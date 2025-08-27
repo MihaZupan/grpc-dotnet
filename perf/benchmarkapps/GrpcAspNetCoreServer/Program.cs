@@ -20,7 +20,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime;
 using Common;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 
 namespace GrpcAspNetCoreServer;
@@ -145,6 +147,15 @@ public class Program
         Console.WriteLine($"Address: {endPoint.Address}:{endPoint.Port}, Protocol: {protocol}");
         Console.WriteLine($"Certificate authentication: {enableCertAuth}");
 
+        listenOptions.Use(next =>
+        {
+            return (ConnectionContext context) =>
+            {
+                Console.WriteLine($"New connection: {context.ConnectionId} from {context.RemoteEndPoint}");
+                return next(context);
+            };
+        });
+
         if (protocol.Equals("h2", StringComparison.OrdinalIgnoreCase))
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2;
@@ -156,6 +167,12 @@ public class Program
                     httpsOptions.ClientCertificateMode = ClientCertificateMode.AllowCertificate;
                     httpsOptions.AllowAnyClientCertificate();
                 }
+            });
+
+            listenOptions.Use((ConnectionDelegate next) => (ConnectionContext context) =>
+            {
+                context.Features.Set<ITlsApplicationProtocolFeature>(new KnownHttp2TlsApplicationProtocolFeature());
+                return next(context);
             });
         }
         else if (protocol.Equals("h3", StringComparison.OrdinalIgnoreCase))
@@ -184,4 +201,8 @@ public class Program
             throw new InvalidOperationException($"Unexpected protocol: {protocol}");
         }
     }
+}
+sealed class KnownHttp2TlsApplicationProtocolFeature : ITlsApplicationProtocolFeature
+{
+    public ReadOnlyMemory<byte> ApplicationProtocol => "h2"u8.ToArray();
 }

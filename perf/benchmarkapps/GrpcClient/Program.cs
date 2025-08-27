@@ -16,6 +16,7 @@
 
 #endregion
 
+using System.Collections.Concurrent;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Diagnostics;
@@ -31,10 +32,15 @@ using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Grpc.Net.Client.Internal;
 using Grpc.Testing;
 using Grpc.Tests.Shared;
 using Microsoft.Crank.EventSources;
 using Microsoft.Extensions.Logging;
+
+#if !NET
+using System.Net.Http.DoNotUseInProduction.TestingOnly;
+#endif
 
 namespace GrpcClient;
 
@@ -49,6 +55,7 @@ class Program
     private static double _maxLatency;
     private static double _firstRequestLatency;
     private static readonly Stopwatch _workTimer = new Stopwatch();
+    private static volatile int _delayPerRequestMs;
     private static volatile bool _warmingUp;
     private static volatile bool _stopped;
     private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1);
@@ -60,8 +67,15 @@ class Program
     private static readonly StringBuilder _errorStringBuilder = new StringBuilder();
     private static readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
+    //private static int _requestsAvailable = 0;
+
     public static async Task<int> Main(string[] args)
     {
+        AppContext.SetSwitch("System.Net.Http.UseWinHttpCertificateCaching", true);
+        //AppContext.SetData("System.Threading.ThreadPool.UnfairSemaphoreSpinLimit", 0);
+
+        Console.WriteLine(typeof(WinHttpHandler).Assembly.Location);
+
         var urlOption = new Option<Uri>(new string[] { "-u", "--url" }, "The server url to request") { IsRequired = true };
         var udsFileNameOption = new Option<string>(new string[] { "--udsFileName" }, "The Unix Domain Socket file name");
         var namedPipeNameOption = new Option<string>(new string[] { "--namedPipeName" }, "The Named Pipe name");
@@ -80,6 +94,8 @@ class Program
         var enableCertAuthOption = new Option<bool>(new string[] { "--enableCertAuth" }, () => false, "Flag indicating whether client sends a client certificate");
         var deadlineOption = new Option<int>(new string[] { "--deadline" }, "Duration of deadline in seconds");
         var winHttpHandlerOption = new Option<bool>(new string[] { "--winhttphandler" }, () => false, "Whether to use WinHttpHandler with Grpc.Net.Client");
+        var compatSocketsHandlerOption = new Option<bool>(new string[] { "--compatSocketsHandler" }, () => false, "Whether to use a FW compat SocketsHttpHandler with Grpc.Net.Client");
+        var rpsOption = new Option<int?>(new string[] { "--rps" }, "Target number of requests per second");
 
         var rootCommand = new RootCommand();
         rootCommand.AddOption(urlOption);
@@ -100,6 +116,8 @@ class Program
         rootCommand.AddOption(enableCertAuthOption);
         rootCommand.AddOption(deadlineOption);
         rootCommand.AddOption(winHttpHandlerOption);
+        rootCommand.AddOption(compatSocketsHandlerOption);
+        rootCommand.AddOption(rpsOption);
 
         rootCommand.SetHandler(async (InvocationContext context) =>
         {
@@ -122,6 +140,8 @@ class Program
             _options.EnableCertAuth = context.ParseResult.GetValueForOption(enableCertAuthOption);
             _options.Deadline = context.ParseResult.GetValueForOption(deadlineOption);
             _options.WinHttpHandler = context.ParseResult.GetValueForOption(winHttpHandlerOption);
+            _options.CompatSocketsHandler = context.ParseResult.GetValueForOption(compatSocketsHandlerOption);
+            _options.TargetRPS = context.ParseResult.GetValueForOption(rpsOption);
 
             var runtimeVersion = typeof(object).GetTypeInfo().Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";
             var isServerGC = GCSettings.IsServerGC;
@@ -178,6 +198,9 @@ class Program
 
     private static async Task StartScenario()
     {
+        Console.WriteLine(Process.GetCurrentProcess().Id);
+        Console.ReadLine();
+
         if (_options.CallCount == null)
         {
             Log("Warm up: " + _options.Warmup);
@@ -197,11 +220,22 @@ class Program
             _cts.CancelAfter(TimeSpan.FromSeconds(_options.Duration + _options.Warmup));
 
             _warmingUp = true;
+            _workTimer.Start();
+
             _ = Task.Run(async () =>
             {
+                if (_options.TargetRPS is not null)
+                {
+                    int concurrency = _options.Connections * _options.Streams;
+                    double rpsPerWorker = (double)_options.TargetRPS.Value / concurrency;
+                    _delayPerRequestMs = (int)(1000.0 / rpsPerWorker) / 2;
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(_options.Warmup));
+
                 _workTimer.Restart();
                 _warmingUp = false;
+                Interlocked.Exchange(ref _callsStarted, 0);
                 Log("Finished warming up.");
             });
         }
@@ -215,6 +249,7 @@ class Program
         try
         {
             Log($"Starting {_options.Scenario}");
+
             Func<int, int, Task> callFactory;
 
             switch (_options.Scenario?.ToLower())
@@ -243,7 +278,81 @@ class Program
                 }
             }
 
+            //Task rpsTask = _options.TargetRPS is null ? Task.CompletedTask : Task.Run(async () =>
+            //{
+            //    Stopwatch stopwatch = Stopwatch.StartNew();
+            //    int releasedSoFar = 0;
+
+            //    while (!_cts.IsCancellationRequested)
+            //    {
+            //        await Task.Delay(10);
+
+            //        int targetReleased = (int)(stopwatch.Elapsed.TotalSeconds * _options.TargetRPS.Value);
+            //        int toRelease = targetReleased - releasedSoFar;
+            //        releasedSoFar = targetReleased;
+
+            //        Interlocked.Add(ref _requestsAvailable, toRelease);
+            //    }
+            //});
+
+            Task rpsMonitorTask = Task.Run(async () =>
+            {
+                TimeSpan lastElapsed = TimeSpan.Zero;
+                int lastRequests = 0;
+
+                while (!_cts.IsCancellationRequested)
+                {
+                    await Task.Delay(1_000);
+
+                    TimeSpan elapsed = _workTimer.Elapsed;
+                    TimeSpan delta = elapsed - lastElapsed;
+                    lastElapsed = elapsed;
+
+                    int newRequests = _callsStarted;
+                    int requestsMade = newRequests - lastRequests;
+                    lastRequests = newRequests;
+
+                    if (delta.TotalSeconds < 1 || requestsMade < 0)
+                    {
+                        continue;
+                    }
+
+                    double actualRps = requestsMade / delta.TotalSeconds;
+
+                    Log($"RPS: {actualRps:0.##} Average: {newRequests / elapsed.TotalSeconds:0.##}");
+
+                    //if (!_warmingUp)
+                    //{
+                    //    continue;
+                    //}
+
+                    //if (actualRps < 0.90 * _options.TargetRPS)
+                    //{
+                    //    _delayPerRequestMs = Math.Max(1, (int)(_delayPerRequestMs * 0.95));
+                    //}
+                    //else if (actualRps < 0.99 * _options.TargetRPS)
+                    //{
+                    //    _delayPerRequestMs = Math.Max(1, _delayPerRequestMs - 1);
+                    //}
+                    //else if (actualRps > 1.10 * _options.TargetRPS)
+                    //{
+                    //    _delayPerRequestMs = (int)((_delayPerRequestMs + 1) * 1.1d);
+                    //}
+                    //else if (actualRps > 1.01 * _options.TargetRPS)
+                    //{
+                    //    _delayPerRequestMs++;
+                    //}
+                    //else
+                    //{
+                    //    continue;
+                    //}
+
+                    //Log($"Adjusting delay to {_delayPerRequestMs}ms to target {_options.TargetRPS} RPS (actual {actualRps:0.##} RPS).");
+                }
+            });
+
             await Task.WhenAll(callTasks);
+            await rpsMonitorTask;
         }
         catch (Exception ex)
         {
@@ -495,6 +604,16 @@ class Program
             return CreateWinHttpHandler();
         }
 
+#if !NET
+        if (_options.CompatSocketsHandler)
+        {
+            return new SocketsHttpHandler()
+            {
+                RemoteCertificateValidationCallback = (sender, cert, chain, errors) => true,
+            };
+        }
+#endif
+
 #if NET9_0_OR_GREATER
         var httpClientHandler = new SocketsHttpHandler();
         httpClientHandler.UseProxy = false;
@@ -535,10 +654,20 @@ class Program
 
     private static WinHttpHandler CreateWinHttpHandler()
     {
+        Console.WriteLine("Creating WinHttpHandler");
+
 #pragma warning disable CA1416 // Validate platform compatibility
         return new WinHttpHandler
         {
             ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true,
+            EnableMultipleHttp2Connections = true,
+            Proxy = null,
+            WindowsProxyUsePolicy = WindowsProxyUsePolicy.DoNotUseProxy,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            AutomaticRedirection = false,
+            PreAuthenticate = false,
+            CheckCertificateRevocationList = false,
+            CookieUsePolicy = CookieUsePolicy.IgnoreCookies,
         };
 #pragma warning restore CA1416 // Validate platform compatibility
     }
@@ -584,9 +713,12 @@ class Program
     private static void ReceivedDateTime(DateTime start, DateTime end, int connectionId)
     {
         var latency = (end - start).TotalMilliseconds;
-        
+
         // Update first request latency with the first non-zero value.
-        Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
+        if (_firstRequestLatency == 0d)
+        {
+            Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
+        }
         
         if (_stopped || _warmingUp)
         {
@@ -741,10 +873,36 @@ class Program
 
         while (!cts.IsCancellationRequested)
         {
+            if (_delayPerRequestMs > 0)
+            {
+                await Task.Delay(_delayPerRequestMs, CancellationToken.None);
+
+                TimeSpan elapsed = _workTimer.Elapsed;
+                int targetRequests = (int)(elapsed.TotalSeconds * _options.TargetRPS!.Value);
+                if (_callsStarted >= targetRequests)
+                {
+                    continue;
+                }
+
+                //if (Interlocked.Decrement(ref _requestsAvailable) < 0)
+                //{
+                //    Interlocked.Increment(ref _requestsAvailable);
+                //    continue;
+                //}
+            }
+
             if (StartCall())
             {
                 break;
             }
+
+            //bool logTimings = Random.Shared.Next(20_000) == 0;
+            //bool logTimings = false;
+
+            //if (logTimings)
+            //{
+            //    PublicDebug.TimingsAsyncLocal.Value = new ConcurrentQueue<(DateTime, string)>();
+            //}
 
             var start = DateTime.UtcNow;
             try
@@ -763,6 +921,19 @@ class Program
 
                 Log(connectionId, streamId, $"Error message: {ex}");
             }
+            //finally
+            //{
+            //    if (logTimings)
+            //    {
+            //        lock (Console.Out)
+            //        {
+            //            Console.WriteLine(string.Join("\n", PublicDebug.TimingsAsyncLocal.Value!.Select(
+            //                p => $"{(p.Item1 - start).TotalMilliseconds:N2}: {p.Item2}")));
+            //        }
+
+            //        PublicDebug.TimingsAsyncLocal.Value = null!;
+            //    }
+            //}
         }
 
         Log(connectionId, streamId, $"Finished {_options.Scenario}");
