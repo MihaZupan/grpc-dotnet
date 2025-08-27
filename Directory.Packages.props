@@ -13,6 +13,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- ASP.NET Core -->
+    <PackageVersion Include="LettuceEncrypt" Version="1.3.3" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="$(MicrosoftAspNetCoreAppPackageVersion)" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="$(MicrosoftAspNetCoreAppPackageVersion)" />
     <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="$(MicrosoftAspNetCoreAppPackageVersion)" />
@@ -80,8 +81,8 @@
     <PackageVersion Include="System.Security.Principal.Windows" Version="5.0.0" />
     <PackageVersion Include="System.Text.Json" Version="8.0.6" />
     <PackageVersion Include="System.Threading.Channels" Version="9.0.8" />
-	<PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
-	<PackageVersion Include="System.Net.Http" Version="4.3.4" />
-	<PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
+    <PackageVersion Include="Microsoft.Bcl.HashCode" Version="6.0.0" />
+    <PackageVersion Include="System.Net.Http" Version="4.3.4" />
+    <PackageVersion Include="System.Threading.Tasks.Extensions" Version="4.6.3" />
   </ItemGroup>
 </Project>

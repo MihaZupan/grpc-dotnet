@@ -21,6 +21,7 @@ using System.Text;
 using Grpc.Shared;
 using Grpc.Testing;
 using Grpc.Tests.Shared;
+using LettuceEncrypt;
 using Microsoft.AspNetCore.Authentication.Certificate;
 using Newtonsoft.Json;
 
@@ -62,6 +63,12 @@ public class Startup
                     options.AllowedCertificateTypes = CertificateTypes.All;
                 });
         }
+
+        DirectoryInfo certDir = new("/home/certs");
+        certDir.Create();
+
+        services.AddLettuceEncrypt()
+            .PersistDataToDirectory(certDir, "certpass123");
     }
 
     public void Configure(IApplicationBuilder app, IHostApplicationLifetime applicationLifetime)

@@ -179,13 +179,15 @@ public class Program
         {
             listenOptions.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
 
-            listenOptions.UseHttps(certPath, "1111", httpsOptions =>
+            listenOptions.UseHttps(httpsOptions =>
             {
                 if (enableCertAuth)
                 {
                     httpsOptions.ClientCertificateMode = ClientCertificateMode.AllowCertificate;
                     httpsOptions.AllowAnyClientCertificate();
                 }
+
+                httpsOptions.UseLettuceEncrypt(listenOptions.ApplicationServices);
             });
         }
         else if (protocol.Equals("h2c", StringComparison.OrdinalIgnoreCase))

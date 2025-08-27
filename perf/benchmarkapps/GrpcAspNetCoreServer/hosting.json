@@ -3,5 +3,10 @@
   "server.urls": "",
   "protocol": "h2c", // This will be overriden when benchmarks are run
   "certificateAuth": false,
-  "LogLevel": ""
+  "LogLevel": "",
+  "LettuceEncrypt": {
+    "AcceptTermsOfService": true,
+    "DomainNames": [ "test2.mihubot.xyz" ],
+    "EmailAddress": "mihazupan.zupan1@gmail.com"
+  }
 }

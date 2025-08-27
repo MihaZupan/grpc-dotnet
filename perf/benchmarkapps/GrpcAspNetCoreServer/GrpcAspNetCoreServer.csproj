@@ -32,6 +32,8 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
 
+    <PackageReference Include="LettuceEncrypt" />
+
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="All" />
