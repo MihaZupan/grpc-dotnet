@@ -55,7 +55,7 @@ class Program
     private static double _maxLatency;
     private static double _firstRequestLatency;
     private static readonly Stopwatch _workTimer = new Stopwatch();
-    private static volatile int _delayPerRequestMs;
+    private static volatile int _delayPerRequestMs = -1;
     private static volatile bool _warmingUp;
     private static volatile bool _stopped;
     private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1);
@@ -880,7 +880,8 @@ class Program
                 int targetRequests = (int)(elapsed.TotalSeconds * _options.TargetRPS!.Value);
                 if (_callsStarted >= targetRequests)
                 {
-                    await Task.Delay(_delayPerRequestMs, CancellationToken.None).ConfigureAwait(false);
+                    int delay = Math.Max(_delayPerRequestMs, 1);
+                    await Task.Delay(delay, CancellationToken.None).ConfigureAwait(false);
                     continue;
                 }
 
