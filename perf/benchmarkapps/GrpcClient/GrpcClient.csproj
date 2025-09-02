@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <TargetFramework Condition="'$(NetFxFramework)'!='true'">net9.0</TargetFramework>
-    <TargetFramework Condition="'$(NetFxFramework)'=='true'">net481</TargetFramework>
+    <TargetFramework Condition="'$(NetFxFramework)'=='true'">net480</TargetFramework>
     <OutputType>Exe</OutputType>
     <DefineConstants Condition="'$(EnableGrpcWeb)' == 'true'">$(DefineConstants);GRPC_WEB</DefineConstants>
     <!-- Enable server GC to more closely simulate a microservice app making calls -->
@@ -41,15 +41,15 @@
 
   <ItemGroup Condition="'$(NetFxFramework)'!='true'">
     <Reference Include="System.Net.Http.WinHttpHandler">
-      <HintPath>..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net9.0-Windows\System.Net.Http.WinHttpHandler.dll</HintPath>
+      <HintPath>..\..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net9.0-Windows\System.Net.Http.WinHttpHandler.dll</HintPath>
     </Reference>
   </ItemGroup>
   <ItemGroup Condition="'$(NetFxFramework)'=='true'">
     <Reference Include="System.Net.Http.WinHttpHandler">
-      <HintPath>..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net462\System.Net.Http.WinHttpHandler.dll</HintPath>
+      <HintPath>..\..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net462\System.Net.Http.WinHttpHandler.dll</HintPath>
     </Reference>
     <Reference Include="SocketsHttpHandlerFW">
-      <HintPath>..\..\..\..\SocketsHttpHandlerFW\SocketsHttpHandlerFW\bin\Release\net481\SocketsHttpHandlerFW.dll</HintPath>
+      <HintPath>..\..\..\..\..\SocketsHttpHandlerFW\SocketsHttpHandlerFW\bin\Release\net480\SocketsHttpHandlerFW.dll</HintPath>
     </Reference>
   </ItemGroup>
 

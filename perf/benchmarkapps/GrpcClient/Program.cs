@@ -574,7 +574,8 @@ class Program
                     throw new Exception("Client certificate not implemented for Grpc.Core");
                 }
 
-                var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
+                //var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
+                var channelCredentials = ChannelCredentials.SecureSsl;
 
                 var channel = new Channel(target, channelCredentials);
                 return channel;
@@ -875,12 +876,11 @@ class Program
         {
             if (_delayPerRequestMs > 0)
             {
-                await Task.Delay(_delayPerRequestMs, CancellationToken.None);
-
                 TimeSpan elapsed = _workTimer.Elapsed;
                 int targetRequests = (int)(elapsed.TotalSeconds * _options.TargetRPS!.Value);
                 if (_callsStarted >= targetRequests)
                 {
+                    await Task.Delay(_delayPerRequestMs, CancellationToken.None).ConfigureAwait(false);
                     continue;
                 }
 
