@@ -874,7 +874,7 @@ class Program
 
         while (!cts.IsCancellationRequested)
         {
-            if (_delayPerRequestMs > 0)
+            if (_delayPerRequestMs >= 0)
             {
                 TimeSpan elapsed = _workTimer.Elapsed;
                 int targetRequests = (int)(elapsed.TotalSeconds * _options.TargetRPS!.Value);
