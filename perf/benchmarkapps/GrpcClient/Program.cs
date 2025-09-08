@@ -321,6 +321,7 @@ class Program
             });
 
             await Task.WhenAll(callTasks);
+            _workTimer.Stop();
             await rpsMonitorTask;
         }
         catch (Exception ex)
