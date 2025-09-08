@@ -40,4 +40,6 @@ public class ClientOptions
     public int Streams { get; set; }
     public int Deadline { get; set; }
     public bool WinHttpHandler { get; set; }
+    public bool CompatSocketsHandler { get; set; }
+    public int? TargetRPS { get; set; }
 }

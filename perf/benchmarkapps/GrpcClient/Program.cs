@@ -31,10 +31,17 @@ using System.Text;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Grpc.Net.Client.Internal;
 using Grpc.Testing;
 using Grpc.Tests.Shared;
 using Microsoft.Crank.EventSources;
 using Microsoft.Extensions.Logging;
+
+using GrpcILogger = Grpc.Core.Logging.ILogger;
+
+#if !NET
+using System.Net.Http.DoNotUseInProduction.TestingOnly;
+#endif
 
 namespace GrpcClient;
 
@@ -49,6 +56,7 @@ class Program
     private static double _maxLatency;
     private static double _firstRequestLatency;
     private static readonly Stopwatch _workTimer = new Stopwatch();
+    private static volatile int _delayPerRequestMs = -1;
     private static volatile bool _warmingUp;
     private static volatile bool _stopped;
     private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1);
@@ -62,6 +70,10 @@ class Program
 
     public static async Task<int> Main(string[] args)
     {
+        AppContext.SetSwitch("System.Net.Http.UseWinHttpCertificateCaching", true);
+
+        Console.WriteLine(typeof(WinHttpHandler).Assembly.Location);
+
         var urlOption = new Option<Uri>(new string[] { "-u", "--url" }, "The server url to request") { IsRequired = true };
         var udsFileNameOption = new Option<string>(new string[] { "--udsFileName" }, "The Unix Domain Socket file name");
         var namedPipeNameOption = new Option<string>(new string[] { "--namedPipeName" }, "The Named Pipe name");
@@ -80,6 +92,8 @@ class Program
         var enableCertAuthOption = new Option<bool>(new string[] { "--enableCertAuth" }, () => false, "Flag indicating whether client sends a client certificate");
         var deadlineOption = new Option<int>(new string[] { "--deadline" }, "Duration of deadline in seconds");
         var winHttpHandlerOption = new Option<bool>(new string[] { "--winhttphandler" }, () => false, "Whether to use WinHttpHandler with Grpc.Net.Client");
+        var compatSocketsHandlerOption = new Option<bool>(new string[] { "--compatSocketsHandler" }, () => false, "Whether to use a FW compat SocketsHttpHandler with Grpc.Net.Client");
+        var rpsOption = new Option<int?>(new string[] { "--rps" }, "Target number of requests per second");
 
         var rootCommand = new RootCommand();
         rootCommand.AddOption(urlOption);
@@ -100,6 +114,8 @@ class Program
         rootCommand.AddOption(enableCertAuthOption);
         rootCommand.AddOption(deadlineOption);
         rootCommand.AddOption(winHttpHandlerOption);
+        rootCommand.AddOption(compatSocketsHandlerOption);
+        rootCommand.AddOption(rpsOption);
 
         rootCommand.SetHandler(async (InvocationContext context) =>
         {
@@ -122,6 +138,8 @@ class Program
             _options.EnableCertAuth = context.ParseResult.GetValueForOption(enableCertAuthOption);
             _options.Deadline = context.ParseResult.GetValueForOption(deadlineOption);
             _options.WinHttpHandler = context.ParseResult.GetValueForOption(winHttpHandlerOption);
+            _options.CompatSocketsHandler = context.ParseResult.GetValueForOption(compatSocketsHandlerOption);
+            _options.TargetRPS = context.ParseResult.GetValueForOption(rpsOption);
 
             var runtimeVersion = typeof(object).GetTypeInfo().Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "Unknown";
             var isServerGC = GCSettings.IsServerGC;
@@ -147,6 +165,21 @@ class Program
                 _loggerFactory = CreateLoggerFactory();
 
                 listener = new HttpEventSourceListener(_loggerFactory);
+
+                if (_options.GrpcClientType == GrpcClientType.GrpcCore)
+                {
+                    if (_options.LogLevel == LogLevel.Trace)
+                    {
+                        Environment.SetEnvironmentVariable("GRPC_TRACE", "all");
+                        Environment.SetEnvironmentVariable("GRPC_VERBOSITY", "DEBUG");
+                    }
+
+                    GrpcILogger logger = new Grpc.Core.Logging.LogLevelFilterLogger(
+                        new Grpc.Core.Logging.ConsoleLogger(),
+                        Grpc.Core.Logging.LogLevel.Debug
+                    );
+                    GrpcEnvironment.SetLogger(logger);
+                }
             }
 
             CreateChannels();
@@ -163,7 +196,7 @@ class Program
         return await rootCommand.InvokeAsync(args);
     }
 
-#if NET9_0_OR_GREATER
+#if NET90_OR_GREATER
     [UnconditionalSuppressMessage("AotAnalysis", "IL3050:RequiresDynamicCode",
         Justification = "DependencyInjection only used with safe types.")]
 #endif
@@ -178,6 +211,11 @@ class Program
 
     private static async Task StartScenario()
     {
+        Console.WriteLine("Current PID:");
+        Console.WriteLine(Process.GetCurrentProcess().Id);
+        Console.WriteLine("-----");
+        Console.WriteLine();
+
         if (_options.CallCount == null)
         {
             Log("Warm up: " + _options.Warmup);
@@ -197,11 +235,22 @@ class Program
             _cts.CancelAfter(TimeSpan.FromSeconds(_options.Duration + _options.Warmup));
 
             _warmingUp = true;
+            _workTimer.Start();
+
             _ = Task.Run(async () =>
             {
+                if (_options.TargetRPS is not null)
+                {
+                    int concurrency = _options.Connections * _options.Streams;
+                    double rpsPerWorker = (double)_options.TargetRPS.Value / concurrency;
+                    _delayPerRequestMs = (int)(1000.0 / rpsPerWorker) / 2;
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(_options.Warmup));
+
                 _workTimer.Restart();
                 _warmingUp = false;
+                Interlocked.Exchange(ref _callsStarted, 0);
                 Log("Finished warming up.");
             });
         }
@@ -215,6 +264,7 @@ class Program
         try
         {
             Log($"Starting {_options.Scenario}");
+
             Func<int, int, Task> callFactory;
 
             switch (_options.Scenario?.ToLower())
@@ -243,14 +293,43 @@ class Program
                 }
             }
 
+            Task rpsMonitorTask = Task.Run(async () =>
+            {
+                TimeSpan lastElapsed = TimeSpan.Zero;
+                int lastRequests = 0;
+
+                while (!_cts.IsCancellationRequested)
+                {
+                    await Task.Delay(1_000);
+
+                    TimeSpan elapsed = _workTimer.Elapsed;
+                    TimeSpan delta = elapsed - lastElapsed;
+                    lastElapsed = elapsed;
+
+                    int newRequests = _callsStarted;
+                    int requestsMade = newRequests - lastRequests;
+                    lastRequests = newRequests;
+
+                    if (delta.TotalSeconds < 1 || requestsMade < 0)
+                    {
+                        continue;
+                    }
+
+                    double actualRps = requestsMade / delta.TotalSeconds;
+                    Log($"RPS: {actualRps:0.##} Average: {newRequests / elapsed.TotalSeconds:0.##}");
+                }
+            });
+
             await Task.WhenAll(callTasks);
+            _workTimer.Stop();
+            await rpsMonitorTask;
         }
         catch (Exception ex)
         {
             var text = "Exception from test: " + ex.Message;
             Log(text);
             _errorStringBuilder.AppendLine();
-            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text) );
+            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text));
         }
     }
 
@@ -300,7 +379,7 @@ class Program
 
         requestDelta = newTotalRequests - _totalRequests;
         _totalRequests = newTotalRequests;
-        
+
         Log($"First request: {_firstRequestLatency:0.###}ms");
 
         // Review: This could be interesting information, see the gap between most active and least active connection
@@ -466,9 +545,16 @@ class Program
                 }
 
                 var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
+                //var channelCredentials = ChannelCredentials.SecureSsl;
 
-                var channel = new Channel(target, channelCredentials);
-                return channel;
+                string expectedSubjectName = @"waterzooi.test.google.be";
+
+                return new Channel(
+                    target,
+                    channelCredentials,
+                    [
+                        new ChannelOption(ChannelOptions.SslTargetNameOverride, expectedSubjectName)
+                    ]);
             case GrpcClientType.GrpcNetClient:
                 var address = useTls ? "https://" : "http://";
                 address += target;
@@ -494,6 +580,19 @@ class Program
         {
             return CreateWinHttpHandler();
         }
+
+#if !NET
+        if (_options.CompatSocketsHandler)
+        {
+            return new SocketsHttpHandler()
+            {
+                RemoteCertificateValidationCallback = (sender, cert, chain, errors) => true,
+                EnableMultipleHttp2Connections = true,
+                AllowAutoRedirect = false,
+                UseCookies = false,
+            };
+        }
+#endif
 
 #if NET9_0_OR_GREATER
         var httpClientHandler = new SocketsHttpHandler();
@@ -535,10 +634,20 @@ class Program
 
     private static WinHttpHandler CreateWinHttpHandler()
     {
+        Console.WriteLine("Creating WinHttpHandler");
+
 #pragma warning disable CA1416 // Validate platform compatibility
         return new WinHttpHandler
         {
             ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) => true,
+            EnableMultipleHttp2Connections = true,
+            Proxy = null,
+            WindowsProxyUsePolicy = WindowsProxyUsePolicy.DoNotUseProxy,
+            AutomaticDecompression = System.Net.DecompressionMethods.None,
+            AutomaticRedirection = false,
+            PreAuthenticate = false,
+            CheckCertificateRevocationList = false,
+            CookieUsePolicy = CookieUsePolicy.IgnoreCookies,
         };
 #pragma warning restore CA1416 // Validate platform compatibility
     }
@@ -552,10 +661,11 @@ class Program
             Log($"Loading credentials from '{AppContext.BaseDirectory}'");
 
             _credentials = new SslCredentials(
-                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "ca.crt")),
+                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "serverCa.pem")),
                 new KeyCertificatePair(
                     File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.crt")),
-                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))));
+                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))),
+                authContext => true);
         }
 
         return _credentials;
@@ -584,10 +694,13 @@ class Program
     private static void ReceivedDateTime(DateTime start, DateTime end, int connectionId)
     {
         var latency = (end - start).TotalMilliseconds;
-        
+
         // Update first request latency with the first non-zero value.
-        Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
-        
+        if (_firstRequestLatency == 0d)
+        {
+            Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
+        }
+
         if (_stopped || _warmingUp)
         {
             return;
@@ -741,6 +854,18 @@ class Program
 
         while (!cts.IsCancellationRequested)
         {
+            if (_delayPerRequestMs >= 0)
+            {
+                TimeSpan elapsed = _workTimer.Elapsed;
+                int targetRequests = (int)(elapsed.TotalSeconds * _options.TargetRPS!.Value);
+                if (_callsStarted >= targetRequests)
+                {
+                    int delay = Math.Max(_delayPerRequestMs, 1);
+                    await Task.Delay(delay, CancellationToken.None).ConfigureAwait(false);
+                    continue;
+                }
+            }
+
             if (StartCall())
             {
                 break;

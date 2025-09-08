@@ -2,11 +2,12 @@
 
   <PropertyGroup>
     <TargetFramework Condition="'$(NetFxFramework)'!='true'">net9.0</TargetFramework>
-    <TargetFramework Condition="'$(NetFxFramework)'=='true'">net462</TargetFramework>
+    <TargetFramework Condition="'$(NetFxFramework)'=='true'">net480</TargetFramework>
     <OutputType>Exe</OutputType>
     <DefineConstants Condition="'$(EnableGrpcWeb)' == 'true'">$(DefineConstants);GRPC_WEB</DefineConstants>
     <!-- Enable server GC to more closely simulate a microservice app making calls -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <SignAssembly>false</SignAssembly>
   </PropertyGroup>
 
   <ItemGroup>
@@ -29,6 +30,15 @@
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.Core" />
     <PackageReference Include="Grpc.Tools" PrivateAssets="All" />
+    <PackageReference Include="System.Memory" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(NetFxFramework)'=='true'">
+    <PackageReference Include="Microsoft.Bcl.HashCode" />
+    <PackageReference Include="System.Net.Http" />
+    <PackageReference Include="System.Threading.Channels" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" />
+    <PackageReference Include="SocketsHttpHandlerFW" />
   </ItemGroup>
 
   <ItemGroup>

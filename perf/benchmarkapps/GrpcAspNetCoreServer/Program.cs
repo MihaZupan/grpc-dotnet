@@ -20,7 +20,9 @@ using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Runtime;
 using Common;
+using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.AspNetCore.Server.Kestrel.Core.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 
 namespace GrpcAspNetCoreServer;
@@ -144,6 +146,15 @@ public class Program
 
         Console.WriteLine($"Address: {endPoint.Address}:{endPoint.Port}, Protocol: {protocol}");
         Console.WriteLine($"Certificate authentication: {enableCertAuth}");
+
+        listenOptions.Use(next =>
+        {
+            return (ConnectionContext context) =>
+            {
+                Console.WriteLine($"New connection: {context.ConnectionId} from {context.RemoteEndPoint}");
+                return next(context);
+            };
+        });
 
         if (protocol.Equals("h2", StringComparison.OrdinalIgnoreCase))
         {
