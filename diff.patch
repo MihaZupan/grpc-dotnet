@@ -1,0 +1,137 @@
+diff --git a/perf/benchmarkapps/GrpcClient/Certs/serverCa.pem b/perf/benchmarkapps/GrpcClient/Certs/serverCa.pem
+new file mode 100644
+index 00000000..49d39cd8
+--- /dev/null
++++ b/perf/benchmarkapps/GrpcClient/Certs/serverCa.pem
+@@ -0,0 +1,20 @@
++-----BEGIN CERTIFICATE-----
++MIIDWjCCAkKgAwIBAgIUWrP0VvHcy+LP6UuYNtiL9gBhD5owDQYJKoZIhvcNAQEL
++BQAwVjELMAkGA1UEBhMCQVUxEzARBgNVBAgMClNvbWUtU3RhdGUxITAfBgNVBAoM
++GEludGVybmV0IFdpZGdpdHMgUHR5IEx0ZDEPMA0GA1UEAwwGdGVzdGNhMB4XDTIw
++MDMxNzE4NTk1MVoXDTMwMDMxNTE4NTk1MVowVjELMAkGA1UEBhMCQVUxEzARBgNV
++BAgMClNvbWUtU3RhdGUxITAfBgNVBAoMGEludGVybmV0IFdpZGdpdHMgUHR5IEx0
++ZDEPMA0GA1UEAwwGdGVzdGNhMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
++AQEAsGL0oXflF0LzoM+Bh+qUU9yhqzw2w8OOX5mu/iNCyUOBrqaHi7mGHx73GD01
++diNzCzvlcQqdNIH6NQSL7DTpBjca66jYT9u73vZe2MDrr1nVbuLvfu9850cdxiUO
++Inv5xf8+sTHG0C+a+VAvMhsLiRjsq+lXKRJyk5zkbbsETybqpxoJ+K7CoSy3yc/k
++QIY3TipwEtwkKP4hzyo6KiGd/DPexie4nBUInN3bS1BUeNZ5zeaIC2eg3bkeeW7c
++qT55b+Yen6CxY0TEkzBK6AKt/WUialKMgT0wbTxRZO7kUCH3Sq6e/wXeFdJ+HvdV
++LPlAg5TnMaNpRdQih/8nRFpsdwIDAQABoyAwHjAMBgNVHRMEBTADAQH/MA4GA1Ud
++DwEB/wQEAwICBDANBgkqhkiG9w0BAQsFAAOCAQEAkTrKZjBrJXHps/HrjNCFPb5a
++THuGPCSsepe1wkKdSp1h4HGRpLoCgcLysCJ5hZhRpHkRihhef+rFHEe60UePQO3S
++CVTtdJB4CYWpcNyXOdqefrbJW5QNljxgi6Fhvs7JJkBqdXIkWXtFk2eRgOIP2Eo9
++/OHQHlYnwZFrk6sp4wPyR+A95S0toZBcyDVz7u+hOW0pGK3wviOe9lvRgj/H3Pwt
++bewb0l+MhRig0/DVHamyVxrDRbqInU1/GTNCwcZkXKYFWSf92U+kIcTth24Q1gcw
++eZiLl5FfrWokUNytFElXob0V0a5/kbhiLc3yWmvWqHTpqCALbVyF+rKJo2f5Kw==
++-----END CERTIFICATE-----
+diff --git a/perf/benchmarkapps/GrpcClient/Program.cs b/perf/benchmarkapps/GrpcClient/Program.cs
+index 2cd21e09..8608b523 100644
+--- a/perf/benchmarkapps/GrpcClient/Program.cs
++++ b/perf/benchmarkapps/GrpcClient/Program.cs
+@@ -36,6 +36,8 @@ using Grpc.Tests.Shared;
+ using Microsoft.Crank.EventSources;
+ using Microsoft.Extensions.Logging;
+ 
++using GrpcILogger = Grpc.Core.Logging.ILogger;
++
+ namespace GrpcClient;
+ 
+ class Program
+@@ -147,8 +149,23 @@ class Program
+                 _loggerFactory = CreateLoggerFactory();
+ 
+                 listener = new HttpEventSourceListener(_loggerFactory);
++                if (_options.GrpcClientType == GrpcClientType.GrpcCore)
++                {
++                    if (_options.LogLevel == LogLevel.Trace)
++                    {
++                        Environment.SetEnvironmentVariable("GRPC_TRACE", "all");
++                        Environment.SetEnvironmentVariable("GRPC_VERBOSITY", "DEBUG");
++                    }
++                    GrpcILogger logger = new Grpc.Core.Logging.LogLevelFilterLogger(
++                        new Grpc.Core.Logging.ConsoleLogger(),
++                        Grpc.Core.Logging.LogLevel.Debug
++                    );
++                    GrpcEnvironment.SetLogger(logger);
++                }
+             }
+ 
++            AppContext.SetSwitch("System.Net.Http.UseWinHttpCertificateCaching", true);
++
+             CreateChannels();
+ 
+             await StartScenario();
+@@ -250,7 +267,7 @@ class Program
+             var text = "Exception from test: " + ex.Message;
+             Log(text);
+             _errorStringBuilder.AppendLine();
+-            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text) );
++            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text));
+         }
+     }
+ 
+@@ -300,7 +317,7 @@ class Program
+ 
+         requestDelta = newTotalRequests - _totalRequests;
+         _totalRequests = newTotalRequests;
+-        
++
+         Log($"First request: {_firstRequestLatency:0.###}ms");
+ 
+         // Review: This could be interesting information, see the gap between most active and least active connection
+@@ -460,14 +477,17 @@ class Program
+         {
+             default:
+             case GrpcClientType.GrpcCore:
+-                if (_options.EnableCertAuth)
+-                {
+-                    throw new Exception("Client certificate not implemented for Grpc.Core");
+-                }
+ 
+                 var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
++                string expectedSubjectName = @"waterzooi.test.google.be";
++
++                var channel = new Channel(
++                    target,
++                    channelCredentials,
++                    new[] {
++                        new ChannelOption(Grpc.Core.ChannelOptions.SslTargetNameOverride, expectedSubjectName)
++                    });
+ 
+-                var channel = new Channel(target, channelCredentials);
+                 return channel;
+             case GrpcClientType.GrpcNetClient:
+                 var address = useTls ? "https://" : "http://";
+@@ -551,11 +571,17 @@ class Program
+         {
+             Log($"Loading credentials from '{AppContext.BaseDirectory}'");
+ 
++            var caFilePath = Path.Combine(AppContext.BaseDirectory, "Certs", "serverCa.pem");
++
+             _credentials = new SslCredentials(
+-                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "ca.crt")),
++                File.ReadAllText(caFilePath),
+                 new KeyCertificatePair(
+                     File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.crt")),
+-                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))));
++                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))),
++                authContext =>
++                {
++                    return true;
++                });
+         }
+ 
+         return _credentials;
+@@ -584,10 +610,10 @@ class Program
+     private static void ReceivedDateTime(DateTime start, DateTime end, int connectionId)
+     {
+         var latency = (end - start).TotalMilliseconds;
+-        
++
+         // Update first request latency with the first non-zero value.
+         Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
+-        
++
+         if (_stopped || _warmingUp)
+         {
+             return;

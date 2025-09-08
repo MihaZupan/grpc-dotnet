@@ -37,6 +37,8 @@ using Grpc.Tests.Shared;
 using Microsoft.Crank.EventSources;
 using Microsoft.Extensions.Logging;
 
+using GrpcILogger = Grpc.Core.Logging.ILogger;
+
 #if !NET
 using System.Net.Http.DoNotUseInProduction.TestingOnly;
 #endif
@@ -163,6 +165,21 @@ class Program
                 _loggerFactory = CreateLoggerFactory();
 
                 listener = new HttpEventSourceListener(_loggerFactory);
+
+                if (_options.GrpcClientType == GrpcClientType.GrpcCore)
+                {
+                    if (_options.LogLevel == LogLevel.Trace)
+                    {
+                        Environment.SetEnvironmentVariable("GRPC_TRACE", "all");
+                        Environment.SetEnvironmentVariable("GRPC_VERBOSITY", "DEBUG");
+                    }
+
+                    GrpcILogger logger = new Grpc.Core.Logging.LogLevelFilterLogger(
+                        new Grpc.Core.Logging.ConsoleLogger(),
+                        Grpc.Core.Logging.LogLevel.Debug
+                    );
+                    GrpcEnvironment.SetLogger(logger);
+                }
             }
 
             CreateChannels();
@@ -311,7 +328,7 @@ class Program
             var text = "Exception from test: " + ex.Message;
             Log(text);
             _errorStringBuilder.AppendLine();
-            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text) );
+            _errorStringBuilder.Append(string.Format(CultureInfo.InvariantCulture, "[{0:hh:mm:ss.fff}] {1}", DateTime.Now, text));
         }
     }
 
@@ -361,7 +378,7 @@ class Program
 
         requestDelta = newTotalRequests - _totalRequests;
         _totalRequests = newTotalRequests;
-        
+
         Log($"First request: {_firstRequestLatency:0.###}ms");
 
         // Review: This could be interesting information, see the gap between most active and least active connection
@@ -526,11 +543,17 @@ class Program
                     throw new Exception("Client certificate not implemented for Grpc.Core");
                 }
 
-                //var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
-                var channelCredentials = ChannelCredentials.SecureSsl;
+                var channelCredentials = useTls ? GetSslCredentials() : ChannelCredentials.Insecure;
+                //var channelCredentials = ChannelCredentials.SecureSsl;
 
-                var channel = new Channel(target, channelCredentials);
-                return channel;
+                string expectedSubjectName = @"waterzooi.test.google.be";
+
+                return new Channel(
+                    target,
+                    channelCredentials,
+                    [
+                        new ChannelOption(ChannelOptions.SslTargetNameOverride, expectedSubjectName)
+                    ]);
             case GrpcClientType.GrpcNetClient:
                 var address = useTls ? "https://" : "http://";
                 address += target;
@@ -637,10 +660,11 @@ class Program
             Log($"Loading credentials from '{AppContext.BaseDirectory}'");
 
             _credentials = new SslCredentials(
-                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "ca.crt")),
+                File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "serverCa.pem")),
                 new KeyCertificatePair(
                     File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.crt")),
-                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))));
+                    File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Certs", "client.key"))),
+                authContext => true);
         }
 
         return _credentials;
@@ -675,7 +699,7 @@ class Program
         {
             Interlocked.CompareExchange(ref _firstRequestLatency, latency, 0d);
         }
-        
+
         if (_stopped || _warmingUp)
         {
             return;
