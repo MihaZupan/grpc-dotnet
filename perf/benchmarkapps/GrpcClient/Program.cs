@@ -16,7 +16,6 @@
 
 #endregion
 
-using System.Collections.Concurrent;
 using System.CommandLine;
 using System.CommandLine.Invocation;
 using System.Diagnostics;
@@ -67,12 +66,9 @@ class Program
     private static readonly StringBuilder _errorStringBuilder = new StringBuilder();
     private static readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
-    //private static int _requestsAvailable = 0;
-
     public static async Task<int> Main(string[] args)
     {
         AppContext.SetSwitch("System.Net.Http.UseWinHttpCertificateCaching", true);
-        //AppContext.SetData("System.Threading.ThreadPool.UnfairSemaphoreSpinLimit", 0);
 
         Console.WriteLine(typeof(WinHttpHandler).Assembly.Location);
 
@@ -198,8 +194,10 @@ class Program
 
     private static async Task StartScenario()
     {
+        Console.WriteLine("Current PID:");
         Console.WriteLine(Process.GetCurrentProcess().Id);
-        Console.ReadLine();
+        Console.WriteLine("-----");
+        Console.WriteLine();
 
         if (_options.CallCount == null)
         {
@@ -278,23 +276,6 @@ class Program
                 }
             }
 
-            //Task rpsTask = _options.TargetRPS is null ? Task.CompletedTask : Task.Run(async () =>
-            //{
-            //    Stopwatch stopwatch = Stopwatch.StartNew();
-            //    int releasedSoFar = 0;
-
-            //    while (!_cts.IsCancellationRequested)
-            //    {
-            //        await Task.Delay(10);
-
-            //        int targetReleased = (int)(stopwatch.Elapsed.TotalSeconds * _options.TargetRPS.Value);
-            //        int toRelease = targetReleased - releasedSoFar;
-            //        releasedSoFar = targetReleased;
-
-            //        Interlocked.Add(ref _requestsAvailable, toRelease);
-            //    }
-            //});
-
             Task rpsMonitorTask = Task.Run(async () =>
             {
                 TimeSpan lastElapsed = TimeSpan.Zero;
@@ -318,36 +299,7 @@ class Program
                     }
 
                     double actualRps = requestsMade / delta.TotalSeconds;
-
                     Log($"RPS: {actualRps:0.##} Average: {newRequests / elapsed.TotalSeconds:0.##}");
-
-                    //if (!_warmingUp)
-                    //{
-                    //    continue;
-                    //}
-
-                    //if (actualRps < 0.90 * _options.TargetRPS)
-                    //{
-                    //    _delayPerRequestMs = Math.Max(1, (int)(_delayPerRequestMs * 0.95));
-                    //}
-                    //else if (actualRps < 0.99 * _options.TargetRPS)
-                    //{
-                    //    _delayPerRequestMs = Math.Max(1, _delayPerRequestMs - 1);
-                    //}
-                    //else if (actualRps > 1.10 * _options.TargetRPS)
-                    //{
-                    //    _delayPerRequestMs = (int)((_delayPerRequestMs + 1) * 1.1d);
-                    //}
-                    //else if (actualRps > 1.01 * _options.TargetRPS)
-                    //{
-                    //    _delayPerRequestMs++;
-                    //}
-                    //else
-                    //{
-                    //    continue;
-                    //}
-
-                    //Log($"Adjusting delay to {_delayPerRequestMs}ms to target {_options.TargetRPS} RPS (actual {actualRps:0.##} RPS).");
                 }
             });
 
@@ -611,6 +563,9 @@ class Program
             return new SocketsHttpHandler()
             {
                 RemoteCertificateValidationCallback = (sender, cert, chain, errors) => true,
+                EnableMultipleHttp2Connections = true,
+                AllowAutoRedirect = false,
+                UseCookies = false,
             };
         }
 #endif
@@ -884,26 +839,12 @@ class Program
                     await Task.Delay(delay, CancellationToken.None).ConfigureAwait(false);
                     continue;
                 }
-
-                //if (Interlocked.Decrement(ref _requestsAvailable) < 0)
-                //{
-                //    Interlocked.Increment(ref _requestsAvailable);
-                //    continue;
-                //}
             }
 
             if (StartCall())
             {
                 break;
             }
-
-            //bool logTimings = Random.Shared.Next(20_000) == 0;
-            //bool logTimings = false;
-
-            //if (logTimings)
-            //{
-            //    PublicDebug.TimingsAsyncLocal.Value = new ConcurrentQueue<(DateTime, string)>();
-            //}
 
             var start = DateTime.UtcNow;
             try
@@ -922,19 +863,6 @@ class Program
 
                 Log(connectionId, streamId, $"Error message: {ex}");
             }
-            //finally
-            //{
-            //    if (logTimings)
-            //    {
-            //        lock (Console.Out)
-            //        {
-            //            Console.WriteLine(string.Join("\n", PublicDebug.TimingsAsyncLocal.Value!.Select(
-            //                p => $"{(p.Item1 - start).TotalMilliseconds:N2}: {p.Item2}")));
-            //        }
-
-            //        PublicDebug.TimingsAsyncLocal.Value = null!;
-            //    }
-            //}
         }
 
         Log(connectionId, streamId, $"Finished {_options.Scenario}");

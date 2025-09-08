@@ -168,12 +168,6 @@ public class Program
                     httpsOptions.AllowAnyClientCertificate();
                 }
             });
-
-            listenOptions.Use((ConnectionDelegate next) => (ConnectionContext context) =>
-            {
-                context.Features.Set<ITlsApplicationProtocolFeature>(new KnownHttp2TlsApplicationProtocolFeature());
-                return next(context);
-            });
         }
         else if (protocol.Equals("h3", StringComparison.OrdinalIgnoreCase))
         {
@@ -203,8 +197,4 @@ public class Program
             throw new InvalidOperationException($"Unexpected protocol: {protocol}");
         }
     }
-}
-sealed class KnownHttp2TlsApplicationProtocolFeature : ITlsApplicationProtocolFeature
-{
-    public ReadOnlyMemory<byte> ApplicationProtocol => "h2"u8.ToArray();
 }

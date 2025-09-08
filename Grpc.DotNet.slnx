@@ -87,5 +87,4 @@
     <File Path="testassets/Proto/grpc/testing/messages.proto" />
     <File Path="testassets/Proto/grpc/testing/test.proto" />
   </Folder>
-  <Project Path="../GrpcFrameworkTest/GrpcFrameworkTest.csproj" Id="6a76804e-9980-429c-8636-895c1d139477" />
 </Solution>

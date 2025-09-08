@@ -7,6 +7,7 @@
     <DefineConstants Condition="'$(EnableGrpcWeb)' == 'true'">$(DefineConstants);GRPC_WEB</DefineConstants>
     <!-- Enable server GC to more closely simulate a microservice app making calls -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <SignAssembly>false</SignAssembly>
   </PropertyGroup>
 
   <ItemGroup>
@@ -24,6 +25,7 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Console" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="System.Net.Http.WinHttpHandler" />
 
     <PackageReference Include="Google.Protobuf" />
     <PackageReference Include="Grpc.Core" />
@@ -36,21 +38,7 @@
     <PackageReference Include="System.Net.Http" />
     <PackageReference Include="System.Threading.Channels" />
     <PackageReference Include="System.Threading.Tasks.Extensions" />
-  </ItemGroup>
-
-
-  <ItemGroup Condition="'$(NetFxFramework)'!='true'">
-    <Reference Include="System.Net.Http.WinHttpHandler">
-      <HintPath>..\..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net9.0-Windows\System.Net.Http.WinHttpHandler.dll</HintPath>
-    </Reference>
-  </ItemGroup>
-  <ItemGroup Condition="'$(NetFxFramework)'=='true'">
-    <Reference Include="System.Net.Http.WinHttpHandler">
-      <HintPath>..\..\..\..\..\runtime-debug\artifacts\bin\System.Net.Http.WinHttpHandler\Release\net462\System.Net.Http.WinHttpHandler.dll</HintPath>
-    </Reference>
-    <Reference Include="SocketsHttpHandlerFW">
-      <HintPath>..\..\..\..\..\SocketsHttpHandlerFW\SocketsHttpHandlerFW\bin\Release\net480\SocketsHttpHandlerFW.dll</HintPath>
-    </Reference>
+    <PackageReference Include="SocketsHttpHandlerFW" />
   </ItemGroup>
 
   <ItemGroup>

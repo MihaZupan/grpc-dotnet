@@ -17,7 +17,6 @@
 #endregion
 
 using System.Collections;
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
@@ -31,11 +30,6 @@ using Grpc.Net.Client.Balancer.Internal;
 #endif
 
 namespace Grpc.Net.Client.Internal;
-
-public static class PublicDebug
-{
-    public static AsyncLocal<ConcurrentQueue<(DateTime, string)>> TimingsAsyncLocal = new();
-}
 
 internal sealed partial class GrpcCall<TRequest, TResponse> : GrpcCall, IGrpcCall<TRequest, TResponse>
     where TRequest : class
@@ -963,14 +957,6 @@ internal sealed partial class GrpcCall<TRequest, TResponse> : GrpcCall, IGrpcCal
     private HttpRequestMessage CreateHttpRequestMessage(TimeSpan? timeout)
     {
         var message = new HttpRequestMessage(HttpMethod.Post, _grpcMethodInfo.CallUri);
-
-//        if (PublicDebug.TimingsAsyncLocal.Value is { } timings)
-//        {
-//#pragma warning disable CS0618 // Type or member is obsolete
-//            message.Properties.Add("DEBUG_TIMINGS", timings);
-//#pragma warning restore CS0618 // Type or member is obsolete
-//        }
-
         message.Version = Channel.HttpVersion;
 #if NET5_0_OR_GREATER
         message.VersionPolicy = Channel.HttpVersionPolicy;
